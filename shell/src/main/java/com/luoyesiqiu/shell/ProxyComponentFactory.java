@@ -43,6 +43,22 @@ public class ProxyComponentFactory extends AppComponentFactory {
         return sAppComponentFactory;
     }
 
+    private void init(ClassLoader cl){
+
+        if(!ProxyApplication.initialized){
+
+            ProxyApplication.initialized = true;
+
+            JniBridge.ia(null,cl);
+            String apkPath = JniBridge.gap(cl);
+            ClassLoader classLoader = ShellClassLoader.loadDex(apkPath);
+            JniBridge.rde(cl,classLoader);
+
+            Log.d(TAG,"ProxyComponentFactory init() classLoader = " + classLoader);
+
+        }
+    }
+
     @Override
     public Activity instantiateActivity(ClassLoader cl, String className, Intent intent) throws ClassNotFoundException, IllegalAccessException, InstantiationException {
         Log.d(TAG, "instantiateActivity() called with: cl = [" + cl + "], className = [" + className + "], intent = [" + intent + "]");
@@ -62,12 +78,7 @@ public class ProxyComponentFactory extends AppComponentFactory {
     @Override
     public Application instantiateApplication(ClassLoader cl, String className) throws ClassNotFoundException, IllegalAccessException, InstantiationException {
         Log.d(TAG, "instantiateApplication() called with: cl = [" + cl + "], className = [" + className + "]");
-        ProxyApplication.initialized = true;
-        JniBridge.ia(null,cl);
-        String apkPath = JniBridge.gap(cl);
-        ClassLoader classLoader = ShellClassLoader.loadDex(apkPath);
-
-        JniBridge.mde(cl,classLoader);
+        init(cl);
 
         AppComponentFactory targetAppComponentFactory = getTargetAppComponentFactory(cl);
         if(targetAppComponentFactory != null) {
@@ -85,6 +96,8 @@ public class ProxyComponentFactory extends AppComponentFactory {
     @Override
     public ClassLoader instantiateClassLoader(ClassLoader cl, ApplicationInfo aInfo) {
         Log.d(TAG, "instantiateClassLoader() called with: cl = [" + cl + "], aInfo = [" + aInfo + "]");
+        init(cl);
+
         AppComponentFactory targetAppComponentFactory = getTargetAppComponentFactory(cl);
 
         if(targetAppComponentFactory != null) {
@@ -134,6 +147,7 @@ public class ProxyComponentFactory extends AppComponentFactory {
     @NonNull
     @Override
     public ContentProvider instantiateProvider(@NonNull ClassLoader cl, @NonNull String className) throws ClassNotFoundException, IllegalAccessException, InstantiationException {
+        Log.d(TAG, "instantiateProvider() called with: cl = [" + cl + "], className = [" + className + "]");
         AppComponentFactory targetAppComponentFactory = getTargetAppComponentFactory(cl);
         if(targetAppComponentFactory != null) {
             try {

@@ -8,7 +8,11 @@
 static jobject g_realApplicationInstance = nullptr;
 static jclass g_realApplicationClass = nullptr;
 static jobject g_context = nullptr;
-static jobject g_packageName = nullptr;
+void* zip_addr = nullptr;
+off_t zip_size;
+char *appComponentFactoryChs = nullptr;
+void *codeItemFilePtr = nullptr;
+
 
 static JNINativeMethod gMethods[] = {
         {"craoc", "(Ljava/lang/String;)V",                               (void *) callRealApplicationOnCreate},
@@ -16,7 +20,8 @@ static JNINativeMethod gMethods[] = {
         {"ia",    "(Landroid/content/Context;Ljava/lang/ClassLoader;)V", (void *) init_app},
         {"gap",   "(Ljava/lang/ClassLoader;)Ljava/lang/String;",         (void *) getApkPath},
         {"rcf",   "(Ljava/lang/ClassLoader;)Ljava/lang/String;",         (void *) readAppComponentFactory},
-        {"mde",   "(Ljava/lang/ClassLoader;Ljava/lang/ClassLoader;)V",        (void *) mergeDexElements}
+        {"mde",   "(Ljava/lang/ClassLoader;Ljava/lang/ClassLoader;)V",        (void *) mergeDexElements},
+        {"rde",   "(Ljava/lang/ClassLoader;Ljava/lang/ClassLoader;)V",        (void *) replaceDexElements}
 };
 
 void mergeDexElements(JNIEnv* env,jclass klass,jobject oldClassLoader,jobject newClassLoader){
@@ -92,15 +97,66 @@ void mergeDexElements(JNIEnv* env,jclass klass,jobject oldClassLoader,jobject ne
     DLOGD("mergeDexElements success");
 }
 
+void replaceDexElements(JNIEnv* env,jclass klass,jobject oldClassLoader,jobject newClassLoader){
+    jclass BaseDexClassLoaderClass = env->FindClass("dalvik/system/BaseDexClassLoader");
+    jfieldID  pathList = env->GetFieldID(BaseDexClassLoaderClass,"pathList","Ldalvik/system/DexPathList;");
+    jobject oldDexPathListObj = env->GetObjectField(oldClassLoader,pathList);
+    if(env->ExceptionCheck() || nullptr == oldDexPathListObj ){
+        env->ExceptionClear();
+        W_DeleteLocalRef(env,BaseDexClassLoaderClass);
+        DLOGW("replaceDexElements oldDexPathListObj get fail");
+        return;
+    }
+    jobject newDexPathListObj = env->GetObjectField(newClassLoader,pathList);
+    if(env->ExceptionCheck() || nullptr == newDexPathListObj){
+        env->ExceptionClear();
+        W_DeleteLocalRef(env,BaseDexClassLoaderClass);
+        W_DeleteLocalRef(env,oldDexPathListObj);
+        DLOGW("replaceDexElements newDexPathListObj get fail");
+        return;
+    }
+
+    jclass DexPathListClass = env->FindClass("dalvik/system/DexPathList");
+    jfieldID  dexElementField = env->GetFieldID(DexPathListClass,"dexElements","[Ldalvik/system/DexPathList$Element;");
+    jobject newClassLoaderDexElements = env->GetObjectField(newDexPathListObj,dexElementField);
+    if(env->ExceptionCheck() || nullptr == newClassLoaderDexElements){
+        env->ExceptionClear();
+        W_DeleteLocalRef(env,BaseDexClassLoaderClass);
+        W_DeleteLocalRef(env,oldDexPathListObj);
+        W_DeleteLocalRef(env,newDexPathListObj);
+        W_DeleteLocalRef(env,DexPathListClass);
+        DLOGW("replaceDexElements dexElements get fail");
+        return;
+    }
+
+    env->SetObjectField(oldDexPathListObj,dexElementField,newClassLoaderDexElements);
+    if(env->ExceptionCheck()){
+        env->ExceptionClear();
+        W_DeleteLocalRef(env,BaseDexClassLoaderClass);
+        W_DeleteLocalRef(env,oldDexPathListObj);
+        W_DeleteLocalRef(env,newDexPathListObj);
+        W_DeleteLocalRef(env,DexPathListClass);
+        W_DeleteLocalRef(env,newClassLoaderDexElements);
+        DLOGW("replaceDexElements dexElements set fail");
+
+        return;
+    }
+    DLOGD("replaceDexElements success");
+}
+
 jstring readAppComponentFactory(JNIEnv *env, jclass klass, jobject classLoader) {
-    jstring apkPath = getApkPath(env, klass, classLoader);
-    jstring fileName = env->NewStringUTF("assets/app_acf");
-    jbyteArray appComponentFactory = readFromZip(env, apkPath, fileName);
-    jclass StringClass = env->FindClass("java/lang/String");
-    jstring StringObj = (jstring) W_NewObject(env, StringClass, "([B)V", appComponentFactory);
-    const char *StringChs = env->GetStringUTFChars(StringObj, NULL);
-    DLOGD("readAppComponentFactory = %s", StringChs);
-    return StringObj;
+    zip_uint64_t entry_size;
+    if(zip_addr == nullptr){
+        jstring apkPath = getApkPath(env,klass,classLoader);
+        const char *apkPathChs = env->GetStringUTFChars(apkPath,nullptr);
+        load_zip(apkPathChs,&zip_addr,&zip_size);
+    }
+
+    if(appComponentFactoryChs == nullptr) {
+        appComponentFactoryChs = (char*)read_zip_file_entry(zip_addr, zip_size,"app_acf", &entry_size);
+    }
+    DLOGD("readAppComponentFactory = %s", appComponentFactoryChs);
+    return env->NewStringUTF((appComponentFactoryChs));
 }
 
 void init_dpt(JNIEnv *env) {
@@ -235,36 +291,26 @@ bool registerNativeMethods(JNIEnv *env) {
 void init_app(JNIEnv *env, jclass klass, jobject context, jobject classLoader) {
     DLOGD("init_app!");
     if (nullptr == context) {
+        clock_t start = clock();
+        zip_uint64_t entry_size;
 
-        jstring apkPath = getApkPath(env, klass, classLoader);
-        jstring fileName = env->NewStringUTF("assets/OoooooOooo");
-        jbyteArray data = readFromZip(env, apkPath, fileName);
-
-
-        int len = env->GetArrayLength(data);
-        if (len <= 0) {
-            DLOGE("readCodeItem Cannot read code item file!");
-            return;
+        if(zip_addr == nullptr){
+            jstring apkPath = getApkPath(env,klass,classLoader);
+            const char *apkPathChs = env->GetStringUTFChars(apkPath,nullptr);
+            load_zip(apkPathChs,&zip_addr,&zip_size);
         }
-        DLOGD("readCodeItem data len = %d", len);
-        auto *buf = (uint8_t *) env->GetByteArrayElements(data, nullptr);
 
+        if(codeItemFilePtr == nullptr) {
+            codeItemFilePtr = read_zip_file_entry(zip_addr,zip_size,"OoooooOooo",&entry_size);
+        }
+        //hexDump("read_zip_file_item item hexdump", (char *) codeItemFilePtr, 1024);
+        readCodeItem(env, klass,(uint8_t*)codeItemFilePtr,entry_size);
 
-        readCodeItem(env, klass, buf,len);
+        printTime("readCodeItem took =" , start);
     } else {
         AAsset *aAsset = getAsset(env, context, "OoooooOooo");
 
         g_context = env->NewGlobalRef(context);
-
-        jclass contextClass = env->GetObjectClass(context);
-        jstring packageName = (jstring) W_CallObjectMethod(env, contextClass, context,
-                                                           "getPackageName",
-                                                           "()Ljava/lang/String;");
-        const char *packageNameChs = env->GetStringUTFChars(packageName, nullptr);
-
-        g_packageName = env->NewGlobalRef(packageName);
-
-        DLOGD("init_app %s", packageNameChs);
 
         if (aAsset != nullptr) {
             int len = AAsset_getLength(aAsset);

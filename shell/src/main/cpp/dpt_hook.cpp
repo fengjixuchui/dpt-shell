@@ -28,6 +28,7 @@ const char *GetClassLinker_LoadMethod_Sym() {
             return "_ZN3art11ClassLinker10LoadMethodERKNS_7DexFileERKNS_21ClassDataItemIteratorENS_6HandleINS_6mirror5ClassEEEPNS_9ArtMethodE";
         case 29:
         case 30:
+        case 31:
             return "_ZN3art11ClassLinker10LoadMethodERKNS_7DexFileERKNS_13ClassAccessor6MethodENS_6HandleINS_6mirror5ClassEEEPNS_9ArtMethodE";
         default:
             return "";
@@ -43,6 +44,9 @@ const char *GetArtLibPath() {
     else if(g_sdkLevel == 30){
         return "/apex/com.android.art/" LIB_DIR "/libart.so";
     }
+    else if(g_sdkLevel == 31){
+        return "/apex/com.android.art/" LIB_DIR "/libart.so";
+    }
 }
 
 const char *GetArtBaseLibPath() {
@@ -50,6 +54,9 @@ const char *GetArtBaseLibPath() {
         return "/apex/com.android.runtime/" LIB_DIR "/libartbase.so";
     }
     else if(g_sdkLevel == 30) {
+        return "/apex/com.android.art/" LIB_DIR "/libartbase.so";
+    }
+    else if(g_sdkLevel == 31) {
         return "/apex/com.android.art/" LIB_DIR "/libartbase.so";
     }
 }
@@ -70,6 +77,7 @@ void callOriginLoadMethod(void *thiz, void *self, const void *dex_file, const vo
             break;
         case 29:
         case 30:
+        case 31:
             g_originLoadMethod29(thiz, dex_file, method, klass, dst);
             break;
     }
@@ -104,6 +112,7 @@ uint32_t getDexFileLocationOffset() {
             break;
         case 29:
         case 30:
+        case 31:
 #ifndef __LP64__
             location_offset = 20;
 #else
@@ -126,6 +135,7 @@ uint32_t getDataItemCodeItemOffset() {
         case 28:
         case 29:
         case 30:
+        case 31:
 #ifndef __LP64__
             begin_offset = 4;
 #else
@@ -194,6 +204,7 @@ ClassDataItemReader* getClassDataItemReader(const void* it,const void* method){
             return new ClassDataItemReader(it);
         case 29:
         case 30:
+        case 31:
             return new ClassDataItemReader(method);
     }
     return nullptr;
@@ -262,7 +273,6 @@ void LoadMethod(void *thiz, void *self, const void *dex_file, const void *it, co
                     changeDexProtect(begin,location->c_str(),dexSize,dexIndex);
                 }
 
-
                 auto codeItemMap = dexIt->second;
                 int methodIdx = classDataItemReader->GetMemberIndex();
                 auto codeItemIt = codeItemMap->find(methodIdx);
@@ -316,26 +326,55 @@ void hook_ClassLinker_LoadMethod() {
             break;
         case 29:
         case 30:
+        case 31:
             DobbyHook(loadMethodAddress, (void *) LoadMethod_QR,(void**)&g_originLoadMethod29);
             break;
 
     }
 }
 
-
-const char* MapFileAtAddress_Sym(){
+const char *getMapFileAtAddressLibPath() {
     switch (g_sdkLevel) {
         case 24:
         case 25:
         case 26:
         case 27:
         case 28:
-            return "_ZN3art6MemMap16MapFileAtAddressEPhjiiilbbPKcPNSt3__112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEE";
+            return GetArtLibPath();
         case 29:
-            return "_ZN3art6MemMap16MapFileAtAddressEPhjiiilbPKcbPS0_PNSt3__112basic_stringIcNS5_11char_traitsIcEENS5_9allocatorIcEEEE";
         case 30:
-            return "_ZN3art6MemMap16MapFileAtAddressEPhmiiilbPKcbPS0_PNSt3__112basic_stringIcNS5_11char_traitsIcEENS5_9allocatorIcEEE";
+        case 31:
+            return GetArtBaseLibPath();
     }
+}
+
+const char* getMapFileAtAddressSymbol(){
+    pointer_t start,size;
+    char full_path[128] = {0};
+    int found = find_in_maps(getMapFileAtAddressLibPath(),&start,&size,full_path);
+    if(found){
+        FILE *lib_fp = fopen(full_path,"r");
+        if(lib_fp){
+            struct stat st;
+            stat(full_path,&st);
+            off_t lib_size = st.st_size;
+            char *data = (char *)calloc(lib_size,1);
+            fread(data,1,lib_size,lib_fp);
+            const char * symbol = find_symbol_in_elf((void*)data,2,"MemMap","MapFileAtAddress");
+            if(symbol != nullptr) {
+                DLOGD("getMapFileAtAddressSymbol find symbol = %s", symbol);
+                fclose(lib_fp);
+                return symbol;
+            }
+            else{
+                DLOGE("getMapFileAtAddressSymbol no found symbol!");
+            }
+
+            free(data);
+        }
+    }
+
+    return "";
 }
 
 void* MapFileAtAddress28(uint8_t* expected_ptr,
@@ -383,7 +422,7 @@ void* MapFileAtAddress29(void* thiz,uint8_t* addr,
     }
 }
 
-void* MapFileAtAddress30(void* thiz,uint8_t* expected_ptr,
+void* MapFileAtAddress30(uint8_t* expected_ptr,
                          size_t byte_count,
                          int prot,
                          int flags,
@@ -396,9 +435,21 @@ void* MapFileAtAddress30(void* thiz,uint8_t* expected_ptr,
                          std::string* error_msg){
     int new_prot = (prot | PROT_WRITE);
 
-    if(nullptr != g_originMapFileAtAddress30) {
-        return g_originMapFileAtAddress30(thiz,expected_ptr,byte_count,new_prot,flags,fd,start,low_4gb,filename,reuse,reservation,error_msg);
+    if(filename == nullptr) {
+        DLOGD("MemMap::MapFileAtAddress call,prot = %d,new_prot = %d", prot,new_prot);
     }
+    else {
+        DLOGD("MemMap::MapFileAtAddress call,prot = %d,new_prot = %d,filename = %s", prot,new_prot,filename);
+    }
+
+    if(endWith(filename,"base.vdex") == 0 || endWith(filename,"base.odex") == 0){
+        return nullptr;
+    }
+
+    if(nullptr != g_originMapFileAtAddress30) {
+        return g_originMapFileAtAddress30(expected_ptr,byte_count,new_prot,flags,fd,start,low_4gb,filename,reuse,reservation,error_msg);
+    }
+    return nullptr;
 }
 
 void hookMapFileAtAddress(){
@@ -409,7 +460,7 @@ void hookMapFileAtAddress(){
         case 26:
         case 27:
         case 28: {
-            void* MapFileAtAddressAddr = DobbySymbolResolver(GetArtLibPath(),MapFileAtAddress_Sym());
+            void* MapFileAtAddressAddr = DobbySymbolResolver(GetArtLibPath(),getMapFileAtAddressSymbol());
 
             DobbyHook(MapFileAtAddressAddr, (void *) MapFileAtAddress28,
                       (void **) &g_originMapFileAtAddress28);
@@ -417,12 +468,21 @@ void hookMapFileAtAddress(){
             break;
         case 29: {
             void *MapFileAtAddressAddr = DobbySymbolResolver(GetArtBaseLibPath(),
-                                                             MapFileAtAddress_Sym());
+                                                             getMapFileAtAddressSymbol());
 
             DobbyHook(MapFileAtAddressAddr, (void *) MapFileAtAddress29,
                       (void **) &g_originMapFileAtAddress29);
         }
             break;
+        case 30: {
+            void *MapFileAtAddressAddr = DobbySymbolResolver(GetArtBaseLibPath(),
+                                                             getMapFileAtAddressSymbol());
+
+            DobbyHook(MapFileAtAddressAddr, (void *) MapFileAtAddress30,
+                      (void **) &g_originMapFileAtAddress30);
+        }
+            break;
+
 
     }
 }

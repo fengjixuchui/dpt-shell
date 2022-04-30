@@ -8,6 +8,9 @@ import com.wind.meditor.property.AttributeItem;
 import com.wind.meditor.property.ModificationProperty;
 import net.lingala.zip4j.ZipFile;
 import net.lingala.zip4j.exception.ZipException;
+import net.lingala.zip4j.model.ZipParameters;
+import net.lingala.zip4j.model.enums.CompressionLevel;
+import net.lingala.zip4j.model.enums.CompressionMethod;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -32,8 +35,8 @@ public class ApkUtils {
      * 复制壳的so文件
      * @param src
      */
-    public static void copyShellLibs(File src){
-        File outLibDir = getOutLibDir();
+    public static void copyShellLibs(String filePath, File src){
+        File outLibDir = getOutLibDir(filePath);
         if(outLibDir.exists()){
             File[] libDirs = outLibDir.listFiles();
             if(libDirs != null && libDirs.length != 0) {
@@ -70,31 +73,31 @@ public class ApkUtils {
      * 获取工作目录下的lib路径
      * @return
      */
-    public static File getOutLibDir(){
-        return FileUtils.getDir(getOutDir().getAbsolutePath(),"lib");
+    public static File getOutLibDir(String filePath){
+        return FileUtils.getDir(filePath,"lib");
     }
 
     /**
      * 获取工作目录下的META-INF路径
      * @return
      */
-    public static File getOutMetaDir(){
-        return FileUtils.getDir(getOutDir().getAbsolutePath(),"META-INF");
+    public static File getOutMetaDir(String filePath){
+        return FileUtils.getDir(filePath,"META-INF");
     }
 
     /**
      * 删除meta-data
      */
-    public static void deleteMetaData(){
-        FileUtils.deleteRecurse(getOutMetaDir());
+    public static void deleteMetaData(String filePath){
+        FileUtils.deleteRecurse(getOutMetaDir(filePath));
     }
 
     /**
      * 写入代理ApplicationName
      */
-    public static void writeProxyAppName(){
-        String inManifestPath = getOutDir().getAbsolutePath() + File.separator + "AndroidManifest.xml";
-        String outManifestPath = getOutDir().getAbsolutePath() + File.separator + "AndroidManifest_new.xml";
+    public static void writeProxyAppName(String filePath){
+        String inManifestPath = filePath + File.separator + "AndroidManifest.xml";
+        String outManifestPath = filePath + File.separator + "AndroidManifest_new.xml";
         ManifestUtils.writeApplicationName(inManifestPath,outManifestPath, Const.PROXY_APPLICATION_NAME);
 
         File inManifestFile = new File(inManifestPath);
@@ -107,9 +110,9 @@ public class ApkUtils {
     /**
      * 写入代理ComponentFactory
      */
-    public static void writeProxyComponentFactoryName(){
-        String inManifestPath = getOutDir().getAbsolutePath() + File.separator + "AndroidManifest.xml";
-        String outManifestPath = getOutDir().getAbsolutePath() + File.separator + "AndroidManifest_new.xml";
+    public static void writeProxyComponentFactoryName(String filePath){
+        String inManifestPath = filePath + File.separator + "AndroidManifest.xml";
+        String outManifestPath = filePath + File.separator + "AndroidManifest_new.xml";
         ManifestUtils.writeAppComponentFactory(inManifestPath,outManifestPath, Const.PROXY_COMPONENT_FACTORY);
 
         File inManifestFile = new File(inManifestPath);
@@ -123,10 +126,10 @@ public class ApkUtils {
     /**
      * 设置extractNativeLibs为true
      */
-    public static void setExtractNativeLibs(){
+    public static void setExtractNativeLibs(String filePath){
 
-        String inManifestPath = getOutDir().getAbsolutePath() + File.separator + "AndroidManifest.xml";
-        String outManifestPath = getOutDir().getAbsolutePath() + File.separator + "AndroidManifest_new.xml";
+        String inManifestPath = filePath + File.separator + "AndroidManifest.xml";
+        String outManifestPath = filePath + File.separator + "AndroidManifest_new.xml";
         ModificationProperty property = new ModificationProperty();
 
         property.addApplicationAttribute(new AttributeItem("extractNativeLibs","true"));
@@ -161,8 +164,8 @@ public class ApkUtils {
      * 获取工作目录下的Assets目录
      * @return
      */
-    public static File getOutAssetsDir(){
-        return FileUtils.getDir(getOutDir().getAbsolutePath(),"assets");
+    public static File getOutAssetsDir(String filePath){
+        return FileUtils.getDir(filePath,"assets");
     }
 
     /**
@@ -178,7 +181,7 @@ public class ApkUtils {
      * 压缩dex文件
      */
     public static void compressDexFiles(String apkDir){
-        compress(getDexFiles(apkDir),getOutAssetsDir().getAbsolutePath()+File.separator + "i11111i111");
+        compress(getDexFiles(apkDir),getOutAssetsDir(apkDir).getAbsolutePath()+File.separator + "i11111i111");
     }
 
     public static void deleteAllDexFiles(String dir){
@@ -217,7 +220,7 @@ public class ApkUtils {
      */
     public static void saveApplicationName(String apkOutDir){
         String androidManifestFile = getManifestFilePath(apkOutDir);
-        File appNameOutFile = new File(getOutAssetsDir(),"app_name");
+        File appNameOutFile = new File(getOutAssetsDir(apkOutDir),"app_name");
         String appName = ManifestUtils.getApplicationName(androidManifestFile);
 
         appName = appName == null ? "" : appName;
@@ -229,20 +232,14 @@ public class ApkUtils {
      * 保存ComponentFactory
      * @param apkOutDir
      */
-    public static boolean saveAppComponentFactory(String apkOutDir){
+    public static void saveAppComponentFactory(String apkOutDir){
         String androidManifestFile = getManifestFilePath(apkOutDir);
-        File appNameOutFile = new File(getOutAssetsDir(),"app_acf");
+        File appNameOutFile = new File(getOutAssetsDir(apkOutDir),"app_acf");
         String appName = ManifestUtils.getAppComponentFactory(androidManifestFile);
 
         appName = appName == null ? "" : appName;
 
-        if(isSystemComponentFactory(appName)){
-            appName = "";
-        }
-
         IoUtils.writeFile(appNameOutFile.getAbsolutePath(),appName.getBytes());
-
-        return !appName.equals("");
     }
 
     public static boolean isSystemComponentFactory(String name){
@@ -260,7 +257,7 @@ public class ApkUtils {
         List<File> dexFiles = getDexFiles(apkOutDir);
         List<List<Instruction>> instructionList = new ArrayList<>();
         String appNameNew = "OoooooOooo";
-        String dataOutputPath = getOutAssetsDir().getAbsolutePath() + File.separator + appNameNew;
+        String dataOutputPath = getOutAssetsDir(apkOutDir).getAbsolutePath() + File.separator + appNameNew;
         for(File dexFile : dexFiles) {
             String newName = dexFile.getName().endsWith(".dex") ? dexFile.getName().replaceAll("\\.dex$", "_tmp.dex") : "_tmp.dex";
             File dexFileNew = new File(dexFile.getParent(), newName);
@@ -351,7 +348,11 @@ public class ApkUtils {
                     zipFile.addFolder(f.getAbsoluteFile());
                 }
                 else{
-                    zipFile.addFile(f.getAbsoluteFile());
+                    ZipParameters zipParameters = new ZipParameters();
+                    if(f.getName().equals("resources.arsc")) {
+                        zipParameters.setCompressionMethod(CompressionMethod.STORE);
+                    }
+                    zipFile.addFile(f.getAbsoluteFile(),zipParameters);
                 }
             }
         }
